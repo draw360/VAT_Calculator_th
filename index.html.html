@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VAT Calculator</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#f6f7fb; margin:0; padding:24px;}
+    .card{max-width:820px; margin:0 auto; background:#fff; border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(0,0,0,.08);}
+    h1{margin:0 0 12px; font-size:22px;}
+    .row{display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;}
+    .field{display:flex; flex-direction:column; gap:6px; margin:10px 0;}
+    label{font-size:13px; color:#333;}
+    input, select, button{font-size:16px; padding:10px 12px; border-radius:12px; border:1px solid #d7dbe7; outline:none;}
+    input:focus, select:focus{border-color:#7aa7ff; box-shadow:0 0 0 3px rgba(122,167,255,.25);}
+    .actions{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;}
+    button{border:0; cursor:pointer; background:#2f6bff; color:#fff;}
+    button.secondary{background:#eef2ff; color:#1f3b87; border:1px solid #d7dbe7;}
+    button.danger{background:#ffecec; color:#8a1f1f; border:1px solid #ffd0d0;}
+    .result{margin-top:14px; padding:14px; background:#f7f9ff; border:1px solid #e3e7ff; border-radius:14px;}
+    .grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;}
+    .k{font-size:12px; color:#5b6275;}
+    .v{font-size:18px; font-weight:700;}
+    .hint{font-size:12px; color:#5b6275; margin-top:8px;}
+    .toast{position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+      background:#111827; color:#fff; padding:10px 12px; border-radius:12px; font-size:13px;
+      opacity:0; pointer-events:none; transition:opacity .18s ease;}
+    .toast.show{opacity:1;}
+    @media (max-width:760px){ .row,.grid{grid-template-columns:1fr;} }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>VAT Calculator</h1>
+
+    <div class="row">
+      <div class="field">
+        <label for="mode">โหมดการคำนวณ</label>
+        <select id="mode">
+          <option value="exclusive">ราคายังไม่รวม VAT (Exclusive)</option>
+          <option value="inclusive">ราคารวม VAT แล้ว (Inclusive)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="rate">อัตรา VAT (%)</label>
+        <input id="rate" type="number" inputmode="decimal" step="0.01" value="7" min="0" />
+      </div>
+
+      <div class="field">
+        <label for="currency">สกุลเงิน</label>
+        <select id="currency">
+          <option value="THB">THB — บาท (฿)</option>
+          <option value="USD">USD — ดอลลาร์ ($)</option>
+          <option value="EUR">EUR — ยูโร (€)</option>
+          <option value="GBP">GBP — ปอนด์ (£)</option>
+          <option value="JPY">JPY — เยน (¥)</option>
+          <option value="CNY">CNY — หยวน (¥)</option>
+          <option value="SGD">SGD — ดอลลาร์สิงคโปร์ ($)</option>
+          <option value="HKD">HKD — ดอลลาร์ฮ่องกง ($)</option>
+          <option value="AUD">AUD — ดอลลาร์ออสเตรเลีย ($)</option>
+          <option value="CAD">CAD — ดอลลาร์แคนาดา ($)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="amount">จำนวนเงิน</label>
+      <input id="amount" type="text" inputmode="decimal" placeholder="เช่น 1,000.00" />
+    </div>
+
+    <div class="actions">
+      <button id="btnCalc" type="button">คำนวณ</button>
+      <button class="secondary" id="btnCopy" type="button">คัดลอกผลลัพธ์</button>
+      <button class="danger" id="btnClear" type="button">เคลียร์ข้อมูล</button>
+    </div>
+
+    <div class="result" aria-live="polite">
+      <div class="grid">
+        <div>
+          <div class="k">มูลค่าก่อน VAT (Base)</div>
+          <div class="v" id="base">—</div>
+        </div>
+        <div>
+          <div class="k">VAT</div>
+          <div class="v" id="vat">—</div>
+        </div>
+        <div>
+          <div class="k">ยอดรวมสุทธิ (Total)</div>
+          <div class="v" id="total">—</div>
+        </div>
+      </div>
+      <div class="hint" id="note">กรอกจำนวนเงิน แล้วกด “คำนวณ”</div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">คัดลอกแล้ว</div>
+
+  <script>
+    const elMode = document.getElementById('mode');
+    const elRate = document.getElementById('rate');
+    const elCurrency = document.getElementById('currency');
+    const elAmount = document.getElementById('amount');
+
+    const elBase = document.getElementById('base');
+    const elVat = document.getElementById('vat');
+    const elTotal = document.getElementById('total');
+    const elNote = document.getElementById('note');
+    const elToast = document.getElementById('toast');
+
+    let last = { base: NaN, vat: NaN, total: NaN, mode: 'exclusive', rate: 7, currency: 'THB', input: '' };
+
+    function parseNumber(input) {
+      const cleaned = String(input || '').replace(/,/g, '').trim();
+      if (cleaned === '') return NaN;
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function round2(n) {
+      return Math.round((n + Number.EPSILON) * 100) / 100;
+    }
+
+    function getLocaleForCurrency(cur) {
+      // ใช้ locale ที่นิยมสำหรับการ format ตัวเลข; ปรับได้ตามต้องการ
+      if (cur === 'THB') return 'th-TH';
+      if (cur === 'JPY') return 'ja-JP';
+      if (cur === 'CNY') return 'zh-CN';
+      return 'en-US';
+    }
+
+    function fmtMoney(n, cur) {
+      if (!Number.isFinite(n)) return '—';
+      const locale = getLocaleForCurrency(cur);
+      try {
+        // currencyDisplay: 'symbol' จะโชว์สัญลักษณ์ตามสกุลเงิน
+        return new Intl.NumberFormat(locale, {
+          style: 'currency',
+          currency: cur,
+          currencyDisplay: 'symbol',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(n);
+      } catch {
+        // fallback
+        return `${cur} ${new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)}`;
+      }
+    }
+
+    function showToast(msg) {
+      elToast.textContent = msg;
+      elToast.classList.add('show');
+      window.clearTimeout(showToast._t);
+      showToast._t = window.setTimeout(() => elToast.classList.remove('show'), 1400);
+    }
+
+    function calc() {
+      const mode = elMode.value;
+      const ratePct = Number(elRate.value);
+      const cur = elCurrency.value;
+      const amount = parseNumber(elAmount.value);
+
+      last = { ...last, mode, rate: ratePct, currency: cur, input: elAmount.value };
+
+      if (!Number.isFinite(ratePct) || ratePct < 0) {
+        elNote.textContent = 'กรุณาใส่อัตรา VAT ให้ถูกต้อง (>= 0)';
+        elBase.textContent = elVat.textContent = elTotal.textContent = '—';
+        last.base = last.vat = last.total = NaN;
+        return;
+      }
+      if (!Number.isFinite(amount) || amount < 0) {
+        elNote.textContent = 'กรุณาใส่จำนวนเงินให้ถูกต้อง (>= 0)';
+        elBase.textContent = elVat.textContent = elTotal.textContent = '—';
+        last.base = last.vat = last.total = NaN;
+        return;
+      }
+
+      const r = ratePct / 100;
+      let base, vat, total;
+
+      if (mode === 'exclusive') {
+        base = amount;
+        vat = base * r;
+        total = base + vat;
+        elNote.textContent = 'โหมด Exclusive: จำนวนเงินที่กรอก = Base (ก่อน VAT)';
+      } else {
+        total = amount;
+        base = (r === 0) ? total : total / (1 + r);
+        vat = total - base;
+        elNote.textContent = 'โหมด Inclusive: จำนวนเงินที่กรอก = Total (รวม VAT แล้ว)';
+      }
+
+      base = round2(base);
+      vat = round2(vat);
+      total = round2(total);
+
+      last.base = base; last.vat = vat; last.total = total;
+
+      elBase.textContent = fmtMoney(base, cur);
+      elVat.textContent = fmtMoney(vat, cur);
+      elTotal.textContent = fmtMoney(total, cur);
+    }
+
+    async function copyResult() {
+      // ถ้ายังไม่คำนวณ แต่มี input ให้คำนวณก่อน
+      if (!Number.isFinite(last.total) && elAmount.value.trim() !== '') calc();
+
+      if (!Number.isFinite(last.total)) {
+        showToast('ยังไม่มีผลลัพธ์ให้คัดลอก');
+        return;
+      }
+
+      const modeText = (last.mode === 'exclusive') ? 'Exclusive (ยังไม่รวม VAT)' : 'Inclusive (รวม VAT แล้ว)';
+      const text =
+`VAT Calculator Result
+- Mode: ${modeText}
+- VAT Rate: ${last.rate}%
+- Currency: ${last.currency}
+- Base: ${fmtMoney(last.base, last.currency)}
+- VAT: ${fmtMoney(last.vat, last.currency)}
+- Total: ${fmtMoney(last.total, last.currency)}`;
+
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('คัดลอกผลลัพธ์แล้ว');
+      } catch (e) {
+        // fallback สำหรับบาง browser/setting
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+          showToast('คัดลอกผลลัพธ์แล้ว');
+        } catch {
+          showToast('คัดลอกไม่สำเร็จ');
+        } finally {
+          document.body.removeChild(ta);
+        }
+      }
+    }
+
+    function clearAll() {
+      elAmount.value = '';
+      elRate.value = '7';
+      elMode.value = 'exclusive';
+      elCurrency.value = 'THB';
+      elBase.textContent = elVat.textContent = elTotal.textContent = '—';
+      elNote.textContent = 'กรอกจำนวนเงิน แล้วกด “คำนวณ”';
+      last = { base: NaN, vat: NaN, total: NaN, mode: 'exclusive', rate: 7, currency: 'THB', input: '' };
+      elAmount.focus();
+      showToast('เคลียร์ข้อมูลแล้ว');
+    }
+
+    // Events
+    document.getElementById('btnCalc').addEventListener('click', calc);
+    document.getElementById('btnCopy').addEventListener('click', copyResult);
+    document.getElementById('btnClear').addEventListener('click', clearAll);
+
+    elAmount.addEventListener('keydown', (e) => { if (e.key === 'Enter') calc(); });
+    [elMode, elRate, elCurrency].forEach(el => el.addEventListener('change', () => {
+      if (elAmount.value.trim() !== '') calc();
+    }));
+  </script>
+</body>
+</html>
